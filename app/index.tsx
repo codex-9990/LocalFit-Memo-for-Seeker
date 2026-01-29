@@ -339,13 +339,14 @@ const styles = StyleSheet.create({
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start', // Align to top to handle multi-line right side
         marginBottom: SPACING.s,
     },
     dateText: {
         fontSize: FONT_SIZE.l,
         fontWeight: '700',
         color: COLORS.text,
+        flexShrink: 0, // Prevent date from shrinking
     },
     timeText: {
         fontSize: FONT_SIZE.xs,
@@ -354,6 +355,8 @@ const styles = StyleSheet.create({
     },
     volumeBadge: {
         alignItems: 'flex-end',
+        flex: 1, // Allow to take remaining space
+        marginLeft: SPACING.m, // Force gap between date and target
     },
     volumeLabel: {
         fontSize: 10,
@@ -365,6 +368,7 @@ const styles = StyleSheet.create({
         fontSize: FONT_SIZE.m,
         fontWeight: '700',
         color: COLORS.accent,
+        textAlign: 'right', // Ensure right alignment
     },
     noteContainer: {
         flexDirection: 'row',
