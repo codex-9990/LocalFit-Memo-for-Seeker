@@ -333,7 +333,7 @@ export default function WorkoutScreen() {
                         >
                             <View style={styles.setLeft}>
                                 <Text style={styles.setExercise}>{item.exercise_name}</Text>
-                                <Text style={styles.setIndex}>Set {sets.length - index}</Text>
+                                <Text style={styles.setIndex}>Set {sets.filter(s => s.exercise_id === item.exercise_id && s.id <= item.id).length}</Text>
                             </View>
                             <View style={styles.setRight}>
                                 <Text style={styles.statsValue}>{item.weight_kg} <Text style={styles.statsUnit}>kg</Text></Text>
