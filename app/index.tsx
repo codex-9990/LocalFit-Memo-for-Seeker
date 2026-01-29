@@ -1,12 +1,14 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Modal, TextInput, Alert } from 'react-native';
 import { Link, useFocusEffect, router, Stack } from 'expo-router';
 import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
 import { getWorkouts, Workout, createWorkout, cleanupEmptyWorkouts, getLatestWorkout } from '../src/database/db';
 import { Ionicons } from '@expo/vector-icons';
+import { Calendar, DateData } from 'react-native-calendars';
 
 export default function HomeScreen() {
     const [workouts, setWorkouts] = useState<Workout[]>([]);
+    const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
 
     // Past Workout Modal
     const [isDateModalVisible, setDateModalVisible] = useState(false);
@@ -67,6 +69,52 @@ export default function HomeScreen() {
         setDateModalVisible(true);
     };
 
+    // Calendar Handlers
+    const getMarkedDates = () => {
+        const marked: any = {};
+        workouts.forEach(w => {
+            const dateStr = new Date(w.date).toISOString().split('T')[0];
+            marked[dateStr] = { marked: true, dotColor: COLORS.accent };
+        });
+        return marked;
+    };
+
+    const handleDayPress = (day: DateData) => {
+        // Find if workout exists for this date
+        // Note: Compare local dates carefully
+        const selectedDateStr = day.dateString;
+        const existingWorkout = workouts.find(w => {
+            const wDate = new Date(w.date).toISOString().split('T')[0];
+            return wDate === selectedDateStr;
+        });
+
+        if (existingWorkout) {
+            router.push({ pathname: '/workout', params: { id: existingWorkout.id } });
+        } else {
+            Alert.alert(
+                "Log Workout",
+                `Create a workout for ${day.month}/${day.day}?`,
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Create",
+                        onPress: () => {
+                            // Create workout for this specific date
+                            // We need to set the time to ensure proper sorting? Or just use noon.
+                            const dateToCreate = new Date(day.timestamp);
+                            // Calendar returns UTC timestamp at 00:00. 
+                            // We want to save it as... effectively that day.
+                            // Let's create it and let db handle ISO string.
+                            createWorkout('', dateToCreate.toISOString(), (id) => {
+                                router.push({ pathname: '/workout', params: { id } });
+                            });
+                        }
+                    }
+                ]
+            );
+        }
+    };
+
     const renderItem = ({ item }: { item: Workout }) => {
         const dateObj = new Date(item.date);
         const dateStr = dateObj.toLocaleDateString(undefined, {
@@ -91,9 +139,9 @@ export default function HomeScreen() {
                         <Text style={styles.timeText}>{timeStr}</Text>
                     </View>
                     <View style={styles.volumeBadge}>
-                        <Text style={styles.volumeLabel}>VOLUME</Text>
+                        <Text style={styles.volumeLabel}>TARGET</Text>
                         <Text style={styles.volumeText}>
-                            {item.totalVolume ? `${Math.round(item.totalVolume).toLocaleString()} kg` : '-'}
+                            {item.bodyParts ? item.bodyParts.split(',').join(' • ') : '-'}
                         </Text>
                     </View>
                 </View>
@@ -126,6 +174,13 @@ export default function HomeScreen() {
                 options={{
                     headerRight: () => (
                         <View style={{ flexDirection: 'row', gap: 16 }}>
+                            <TouchableOpacity onPress={() => setViewMode(viewMode === 'list' ? 'calendar' : 'list')}>
+                                <Ionicons
+                                    name={viewMode === 'list' ? "calendar-outline" : "list-outline"}
+                                    size={24}
+                                    color={COLORS.accent}
+                                />
+                            </TouchableOpacity>
                             <Link href="/stats" asChild>
                                 <TouchableOpacity>
                                     <Ionicons name="trophy-outline" size={24} color={COLORS.accent} />
@@ -141,29 +196,69 @@ export default function HomeScreen() {
                 }}
             />
 
-            <FlatList
-                data={workouts}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.id.toString()}
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Ionicons name="barbell-outline" size={64} color={COLORS.border} />
-                        <Text style={styles.emptyText}>No workouts yet.</Text>
-                        <Text style={styles.emptySubText}>Tap the + button to start training!</Text>
+            {viewMode === 'list' ? (
+                <FlatList
+                    data={workouts}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.id.toString()}
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Ionicons name="barbell-outline" size={64} color={COLORS.border} />
+                            <Text style={styles.emptyText}>No workouts yet.</Text>
+                            <Text style={styles.emptySubText}>Tap the + button to start training!</Text>
+                        </View>
+                    }
+                />
+            ) : (
+                <View style={styles.calendarContainer}>
+                    <Calendar
+                        markingType={'simple'}
+                        markedDates={getMarkedDates()}
+                        onDayPress={handleDayPress}
+                        theme={{
+                            backgroundColor: COLORS.background,
+                            calendarBackground: COLORS.background,
+                            textSectionTitleColor: COLORS.textSecondary,
+                            selectedDayBackgroundColor: COLORS.accent,
+                            selectedDayTextColor: '#ffffff',
+                            todayTextColor: COLORS.accent,
+                            dayTextColor: COLORS.text,
+                            textDisabledColor: COLORS.border,
+                            dotColor: COLORS.accent,
+                            selectedDotColor: '#ffffff',
+                            arrowColor: COLORS.accent,
+                            monthTextColor: COLORS.text,
+                            textDayFontWeight: '300',
+                            textMonthFontWeight: 'bold',
+                            textDayHeaderFontWeight: '300',
+                            textDayFontSize: 16,
+                            textMonthFontSize: 16,
+                            textDayHeaderFontSize: 16
+                        }}
+                    />
+                    <View style={styles.calendarHint}>
+                        <Text style={styles.calendarHintText}>
+                            Drafts marked with <Ionicons name="ellipse" size={10} color={COLORS.accent} />
+                        </Text>
+                        <Text style={styles.calendarHintText}>
+                            Tap a date to edit or creating a workout.
+                        </Text>
                     </View>
-                }
-            />
+                </View>
+            )}
 
-            {/* Floating Action Button */}
-            <TouchableOpacity
-                style={styles.fab}
-                onPress={handleNewWorkout}
-                onLongPress={openDateModal}
-                activeOpacity={0.8}
-            >
-                <Ionicons name="add" size={32} color="#FFFFFF" />
-            </TouchableOpacity>
+            {/* Floating Action Button (Only in List Mode or to quickly add today) */}
+            {viewMode === 'list' && (
+                <TouchableOpacity
+                    style={styles.fab}
+                    onPress={handleNewWorkout}
+                    onLongPress={openDateModal}
+                    activeOpacity={0.8}
+                >
+                    <Ionicons name="add" size={32} color="#FFFFFF" />
+                </TouchableOpacity>
+            )}
 
             {/* Past Date Modal */}
             <Modal visible={isDateModalVisible} transparent animationType="fade">
@@ -224,6 +319,18 @@ const styles = StyleSheet.create({
     listContent: {
         padding: SPACING.m,
         paddingBottom: 100, // Space for FAB
+    },
+    calendarContainer: {
+        paddingTop: SPACING.m,
+    },
+    calendarHint: {
+        padding: SPACING.m,
+        alignItems: 'center',
+    },
+    calendarHintText: {
+        color: COLORS.textSecondary,
+        fontSize: FONT_SIZE.s,
+        marginTop: 4,
     },
     card: {
         backgroundColor: COLORS.surface,

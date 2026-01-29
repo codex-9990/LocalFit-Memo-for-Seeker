@@ -17,6 +17,8 @@ export interface Workout {
     date: string;
     note: string;
     totalVolume?: number;
+    exerciseNames?: string;
+    bodyParts?: string;
 }
 
 export interface WorkoutSet {
@@ -149,9 +151,13 @@ export const initDB = () => {
 export const getWorkouts = (callback: (workouts: Workout[]) => void) => {
     try {
         const workouts = db.getAllSync<Workout>(`
-      SELECT w.*, SUM(s.weight_kg * s.reps) as totalVolume 
+      SELECT w.*, 
+             SUM(s.weight_kg * s.reps) as totalVolume,
+             GROUP_CONCAT(DISTINCT e.name) as exerciseNames,
+             GROUP_CONCAT(DISTINCT e.target_body_part) as bodyParts
       FROM workouts w 
       LEFT JOIN sets s ON w.id = s.workout_id 
+      LEFT JOIN exercises e ON s.exercise_id = e.id
       GROUP BY w.id 
       ORDER BY w.date DESC
     `);
