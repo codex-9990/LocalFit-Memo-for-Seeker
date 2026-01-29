@@ -146,13 +146,7 @@ export default function HomeScreen() {
                     </View>
                 </View>
 
-                {item.exerciseNames ? (
-                    <View style={styles.exercisesContainer}>
-                        <Text style={styles.exercisesText} numberOfLines={2}>
-                            {item.exerciseNames.split(',').join(' • ')}
-                        </Text>
-                    </View>
-                ) : null}
+                {/* Exercise names removed as per request */}
 
                 {item.note ? (
                     <View style={styles.noteContainer}>
