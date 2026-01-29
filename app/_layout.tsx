@@ -61,7 +61,7 @@ export default function Layout() {
                     },
                 }}
             >
-                <Stack.Screen name="index" options={{ title: 'Training Log' }} />
+                <Stack.Screen name="index" options={{ title: 'LocalFit Memo' }} />
                 <Stack.Screen name="workout" options={{ title: 'Current Session' }} />
                 <Stack.Screen name="settings" options={{ title: 'Settings' }} />
             </Stack>

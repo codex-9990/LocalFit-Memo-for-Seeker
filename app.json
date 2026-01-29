@@ -1,7 +1,7 @@
 {
     "expo": {
-        "name": "Iron Vault",
-        "slug": "iron-vault",
+        "name": "LocalFit Memo for Seeker",
+        "slug": "localfit-memo-for-seeker",
         "version": "1.0.0",
         "orientation": "portrait",
         "icon": "./assets/icon.png",
