@@ -1,0 +1,54 @@
+# Expo
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Node modules
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Android/IntelliJ
+.idea
+android/.gradle
+android/app/build
+android/build
+build
+.settings
+*.iml
+
+# iOS
+ios/Pods
+ios/build
+ios/*.xcworkspace
+ios/*.xcodeproj/project.xcworkspace
+ios/*.xcodeproj/xcuserdata
+
+# Web
+web-build/
+
+# TypeScript
+*.tsbuildinfo
+
+# Database (Protect User Data)
+*.db
+*.sqlite
+*.sqlite3
+iron_vault_backup.json
+
+# Environment
+.env
+.env.local
+.env.*.local
