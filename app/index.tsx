@@ -5,6 +5,7 @@ import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
 import { getWorkouts, Workout, createWorkout, cleanupEmptyWorkouts, getLatestWorkout } from '../src/database/db';
 import { Ionicons } from '@expo/vector-icons';
 import { Calendar, DateData } from 'react-native-calendars';
+import { dateKeyToLocalNoon, datePartsToLocalNoon, toLocalDateKey } from '../src/utils/date';
 
 export default function HomeScreen() {
     const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -26,8 +27,8 @@ export default function HomeScreen() {
 
     const handleNewWorkout = () => {
         getLatestWorkout((latestWorkout) => {
-            const today = new Date().toDateString();
-            if (latestWorkout && new Date(latestWorkout.date).toDateString() === today) {
+            const today = toLocalDateKey(new Date());
+            if (latestWorkout && toLocalDateKey(latestWorkout.date) === today) {
                 // Resume today's workout
                 router.push({ pathname: '/workout', params: { id: latestWorkout.id } });
             } else {
@@ -40,14 +41,14 @@ export default function HomeScreen() {
     };
 
     const handleCreatePastWorkout = () => {
-        const y = parseInt(year);
-        const m = parseInt(month) - 1; // Month is 0-indexed
-        const d = parseInt(day);
+        const y = parseInt(year, 10);
+        const m = parseInt(month, 10);
+        const d = parseInt(day, 10);
 
-        const date = new Date(y, m, d);
+        const date = datePartsToLocalNoon(y, m, d);
 
         // Basic validation
-        if (isNaN(date.getTime()) || date.getFullYear() !== y || date.getMonth() !== m || date.getDate() !== d) {
+        if (isNaN(date.getTime()) || date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) {
             alert('Invalid Date');
             return;
         }
@@ -63,9 +64,10 @@ export default function HomeScreen() {
 
     const openDateModal = () => {
         const now = new Date();
-        setYear(now.getFullYear().toString());
-        setMonth((now.getMonth() + 1).toString());
-        setDay((now.getDate() - 1).toString()); // Default to yesterday
+        const yesterday = datePartsToLocalNoon(now.getFullYear(), now.getMonth() + 1, now.getDate() - 1);
+        setYear(yesterday.getFullYear().toString());
+        setMonth((yesterday.getMonth() + 1).toString());
+        setDay(yesterday.getDate().toString());
         setDateModalVisible(true);
     };
 
@@ -73,7 +75,7 @@ export default function HomeScreen() {
     const getMarkedDates = () => {
         const marked: any = {};
         workouts.forEach(w => {
-            const dateStr = new Date(w.date).toISOString().split('T')[0];
+            const dateStr = toLocalDateKey(w.date);
             marked[dateStr] = { marked: true, dotColor: COLORS.accent };
         });
         return marked;
@@ -84,7 +86,7 @@ export default function HomeScreen() {
         // Note: Compare local dates carefully
         const selectedDateStr = day.dateString;
         const existingWorkout = workouts.find(w => {
-            const wDate = new Date(w.date).toISOString().split('T')[0];
+            const wDate = toLocalDateKey(w.date);
             return wDate === selectedDateStr;
         });
 
@@ -99,12 +101,7 @@ export default function HomeScreen() {
                     {
                         text: "Create",
                         onPress: () => {
-                            // Create workout for this specific date
-                            // We need to set the time to ensure proper sorting? Or just use noon.
-                            const dateToCreate = new Date(day.timestamp);
-                            // Calendar returns UTC timestamp at 00:00. 
-                            // We want to save it as... effectively that day.
-                            // Let's create it and let db handle ISO string.
+                            const dateToCreate = dateKeyToLocalNoon(day.dateString);
                             createWorkout('', dateToCreate.toISOString(), (id) => {
                                 router.push({ pathname: '/workout', params: { id } });
                             });
@@ -236,7 +233,7 @@ export default function HomeScreen() {
                             Drafts marked with <Ionicons name="ellipse" size={10} color={COLORS.accent} />
                         </Text>
                         <Text style={styles.calendarHintText}>
-                            Tap a date to edit or creating a workout.
+                            Tap a date to edit or create a workout.
                         </Text>
                     </View>
                 </View>
