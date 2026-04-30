@@ -2,37 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, Dimensions, ActivityIndicator } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
-import { getPersonalBests, getExerciseProgress, ExerciseProgress, getExercises, Exercise } from '../src/database/db';
+import { getPersonalBests, getExerciseProgress, ExerciseProgress, PersonalBest } from '../src/database/db';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
+import { toLocalDateKey } from '../src/utils/date';
 
 export default function StatsScreen() {
-    const [stats, setStats] = useState<{ exerciseName: string; maxWeight: number; bestReps: number; exerciseId: number }[]>([]);
+    const [stats, setStats] = useState<PersonalBest[]>([]);
 
     // Chart State
     const [selectedExercise, setSelectedExercise] = useState<{ name: string; id: number } | null>(null);
     const [chartData, setChartData] = useState<ExerciseProgress[]>([]);
     const [loading, setLoading] = useState(false);
-    const [exercisesMap, setExercisesMap] = useState<Record<string, number>>({});
 
     useEffect(() => {
-        // Fetch stats
-        getPersonalBests((data) => {
-            // We need exercise IDs to fetch progress. `getPersonalBests` currently returns names.
-            // Let's fetch all exercises to map names to IDs.
-            getExercises((allExercises) => {
-                const map: Record<string, number> = {};
-                allExercises.forEach(e => map[e.name] = e.id);
-                setExercisesMap(map);
-
-                // Add ID to stats
-                const statsWithIds = data.map(d => ({
-                    ...d,
-                    exerciseId: map[d.exerciseName] || 0
-                }));
-                setStats(statsWithIds);
-            });
-        });
+        getPersonalBests(setStats);
     }, []);
 
     const handleOpenChart = (exerciseName: string, exerciseId: number) => {
@@ -58,8 +42,8 @@ export default function StatsScreen() {
         }
 
         const labels = chartData.map(d => {
-            const date = new Date(d.date);
-            return `${date.getMonth() + 1}/${date.getDate()}`;
+            const [, month, day] = toLocalDateKey(d.date).split('-');
+            return `${parseInt(month, 10)}/${parseInt(day, 10)}`;
         });
 
         // Take at most 6 labels to avoid clutter

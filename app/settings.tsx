@@ -24,10 +24,14 @@ export default function SettingsScreen() {
                     text: 'Import',
                     style: 'destructive',
                     onPress: async () => {
-                        await importDatabase(() => {
-                            Alert.alert('Success', 'Database restored. App will restart data.');
-                            router.replace('/');
-                        });
+                        try {
+                            await importDatabase(() => {
+                                Alert.alert('Success', 'Database restored. App will restart data.');
+                                router.replace('/');
+                            });
+                        } catch (e: any) {
+                            Alert.alert('Import Failed', e?.message ?? 'The selected backup could not be imported.');
+                        }
                     }
                 }
             ]
@@ -83,7 +87,7 @@ export default function SettingsScreen() {
             </View>
 
             <View style={styles.footer}>
-                <Text style={styles.footerText}>Iron Vault v1.0.0</Text>
+                <Text style={styles.footerText}>LocalFit Memo v1.0.0</Text>
                 <Text style={styles.footerText}>Offline-First. Zero-Knowledge.</Text>
             </View>
         </View>

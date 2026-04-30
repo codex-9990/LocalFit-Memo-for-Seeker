@@ -5,7 +5,7 @@ import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
 import {
     getExercises, addExercise, addSet, updateSet, deleteSet, getSetsForWorkout, deleteWorkout,
     createRoutineFromWorkout, getRoutines, applyRoutineToWorkout, Routine,
-    Exercise, WorkoutSet, getLastSetForExercise
+    Exercise, WorkoutSet, getLastSetForExercise, RoutineExercise
 } from '../src/database/db';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -16,6 +16,7 @@ export default function WorkoutScreen() {
     const [exercises, setExercises] = useState<Exercise[]>([]);
     const [filteredExercises, setFilteredExercises] = useState<Exercise[]>([]); // Displayed list
     const [sets, setSets] = useState<WorkoutSet[]>([]);
+    const [plannedExercises, setPlannedExercises] = useState<RoutineExercise[]>([]);
     const [lastSet, setLastSet] = useState<WorkoutSet | null>(null);
     const [selectedExerciseId, setSelectedExerciseId] = useState<number | null>(null);
     const [weight, setWeight] = useState('');
@@ -47,7 +48,12 @@ export default function WorkoutScreen() {
             setExercises(data);
             setFilteredExercises(data);
         });
-        getSetsForWorkout(workoutId, setSets);
+        getSetsForWorkout(workoutId, (data) => {
+            setSets(data);
+            setPlannedExercises((current) => (
+                current.filter((planned) => !data.some((set) => set.exercise_id === planned.exercise_id))
+            ));
+        });
     }, [workoutId]);
 
     useEffect(() => {
@@ -55,7 +61,13 @@ export default function WorkoutScreen() {
         let result = exercises;
 
         if (selectedBodyPart !== 'All') {
-            result = result.filter(ex => ex.target_body_part === selectedBodyPart);
+            result = result.filter(ex => {
+                if (selectedBodyPart === 'Arms') {
+                    return ['Arms', 'Biceps', 'Triceps'].includes(ex.target_body_part);
+                }
+
+                return ex.target_body_part === selectedBodyPart;
+            });
         }
 
         if (searchText) {
@@ -89,15 +101,24 @@ export default function WorkoutScreen() {
             return;
         }
 
+        const parsedWeight = parseFloat(weight);
+        const parsedReps = parseInt(reps, 10);
+
+        if (!Number.isFinite(parsedWeight) || parsedWeight < 0 || !Number.isInteger(parsedReps) || parsedReps <= 0) {
+            Alert.alert('Invalid Input', 'Weight must be 0 or more, and reps must be at least 1.');
+            return;
+        }
+
         if (editingSetId) {
-            updateSet(editingSetId, parseFloat(weight), parseInt(reps, 10), () => {
+            updateSet(editingSetId, parsedWeight, parsedReps, () => {
                 setEditingSetId(null);
                 setWeight('');
                 setReps('');
                 refreshData();
             });
         } else {
-            addSet(workoutId, selectedExerciseId, parseFloat(weight), parseInt(reps, 10), () => {
+            addSet(workoutId, selectedExerciseId, parsedWeight, parsedReps, () => {
+                setPlannedExercises((current) => current.filter((planned) => planned.exercise_id !== selectedExerciseId));
                 refreshData();
             });
         }
@@ -162,7 +183,11 @@ export default function WorkoutScreen() {
     };
 
     const handleLoadRoutine = (routineId: number) => {
-        applyRoutineToWorkout(workoutId, routineId, () => {
+        applyRoutineToWorkout(workoutId, routineId, (planned) => {
+            setPlannedExercises(planned);
+            if (planned.length > 0) {
+                setSelectedExerciseId(planned[0].exercise_id);
+            }
             setIsLoadRoutineModalVisible(false);
             refreshData();
         });
@@ -303,7 +328,7 @@ export default function WorkoutScreen() {
                     )}
 
                     <TouchableOpacity
-                        style={[styles.addButton, editingSetId && styles.editButton]}
+                        style={[styles.addButton, editingSetId ? styles.editButton : null]}
                         onPress={handleAddSet}
                     >
                         <Ionicons
@@ -319,8 +344,37 @@ export default function WorkoutScreen() {
             <View style={styles.listContainer}>
                 <View style={styles.listHeader}>
                     <Text style={styles.listTitle}>SESSION LOG</Text>
-                    <Text style={styles.listCount}>{sets.length} sets</Text>
+                    <Text style={styles.listCount}>
+                        {sets.length} sets{plannedExercises.length > 0 ? ` / ${plannedExercises.length} planned` : ''}
+                    </Text>
                 </View>
+
+                {plannedExercises.length > 0 && (
+                    <View style={styles.planContainer}>
+                        <Text style={styles.planTitle}>PRESET PLAN</Text>
+                        {plannedExercises.map((exercise) => (
+                            <TouchableOpacity
+                                key={exercise.exercise_id}
+                                style={[
+                                    styles.planItem,
+                                    selectedExerciseId === exercise.exercise_id && styles.activePlanItem,
+                                ]}
+                                onPress={() => setSelectedExerciseId(exercise.exercise_id)}
+                                activeOpacity={0.7}
+                            >
+                                <View>
+                                    <Text style={styles.planExercise}>{exercise.exercise_name}</Text>
+                                    <Text style={styles.planMeta}>{exercise.target_body_part || 'Other'}</Text>
+                                </View>
+                                <Ionicons
+                                    name={selectedExerciseId === exercise.exercise_id ? "radio-button-on" : "radio-button-off"}
+                                    size={20}
+                                    color={selectedExerciseId === exercise.exercise_id ? COLORS.accent : COLORS.textSecondary}
+                                />
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                )}
 
                 <FlatList
                     data={sets}
@@ -549,6 +603,43 @@ const styles = StyleSheet.create({
     listCount: {
         fontSize: FONT_SIZE.xs,
         color: COLORS.textSecondary,
+    },
+    planContainer: {
+        marginHorizontal: SPACING.m,
+        marginBottom: SPACING.m,
+        padding: SPACING.m,
+        backgroundColor: COLORS.surface,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    planTitle: {
+        fontSize: FONT_SIZE.xs,
+        fontWeight: '700',
+        color: COLORS.textSecondary,
+        letterSpacing: 1,
+        marginBottom: SPACING.s,
+    },
+    planItem: {
+        paddingVertical: SPACING.s,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderColor: COLORS.border,
+    },
+    activePlanItem: {
+        borderColor: COLORS.accent,
+    },
+    planExercise: {
+        fontSize: FONT_SIZE.m,
+        fontWeight: '600',
+        color: COLORS.text,
+    },
+    planMeta: {
+        fontSize: FONT_SIZE.xs,
+        color: COLORS.textSecondary,
+        marginTop: 2,
     },
     listContent: {
         paddingHorizontal: SPACING.m,

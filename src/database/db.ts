@@ -37,6 +37,143 @@ export interface ExerciseProgress {
     one_rep_max: number;
 }
 
+export interface PersonalBest {
+    exerciseId: number;
+    exerciseName: string;
+    maxWeight: number;
+    bestReps: number;
+}
+
+export interface RoutineExercise {
+    exercise_id: number;
+    exercise_name: string;
+    target_body_part: string;
+}
+
+type BackupExercise = {
+    id: number;
+    name: string;
+    target_body_part: string | null;
+};
+
+type BackupWorkout = {
+    id: number;
+    date: string;
+    note: string | null;
+};
+
+type BackupSet = {
+    id: number;
+    workout_id: number;
+    exercise_id: number;
+    weight_kg: number;
+    reps: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const isPositiveInteger = (value: unknown): value is number => {
+    return Number.isInteger(value) && (value as number) > 0;
+};
+
+const isNonNegativeNumber = (value: unknown): value is number => {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+};
+
+const isNonNegativeInteger = (value: unknown): value is number => {
+    return Number.isInteger(value) && (value as number) >= 0;
+};
+
+const assertUniqueIds = (items: { id: number }[], label: string) => {
+    const seen = new Set<number>();
+
+    items.forEach((item) => {
+        if (seen.has(item.id)) {
+            throw new Error(`Invalid backup: duplicate ${label} id ${item.id}.`);
+        }
+        seen.add(item.id);
+    });
+};
+
+const validateBackupData = (data: unknown) => {
+    if (!isRecord(data)) {
+        throw new Error('Invalid backup: root must be an object.');
+    }
+
+    if (!Array.isArray(data.exercises) || !Array.isArray(data.workouts) || !Array.isArray(data.sets)) {
+        throw new Error('Invalid backup: exercises, workouts, and sets arrays are required.');
+    }
+
+    const exercises: BackupExercise[] = data.exercises.map((item, index) => {
+        if (!isRecord(item) || !isPositiveInteger(item.id) || typeof item.name !== 'string' || !item.name.trim()) {
+            throw new Error(`Invalid backup: exercise at index ${index} is malformed.`);
+        }
+
+        if (item.target_body_part != null && typeof item.target_body_part !== 'string') {
+            throw new Error(`Invalid backup: exercise target body part at index ${index} is malformed.`);
+        }
+
+        return {
+            id: item.id,
+            name: item.name.trim(),
+            target_body_part: item.target_body_part ?? null,
+        };
+    });
+
+    const workouts: BackupWorkout[] = data.workouts.map((item, index) => {
+        if (!isRecord(item) || !isPositiveInteger(item.id) || typeof item.date !== 'string' || Number.isNaN(new Date(item.date).getTime())) {
+            throw new Error(`Invalid backup: workout at index ${index} is malformed.`);
+        }
+
+        if (item.note != null && typeof item.note !== 'string') {
+            throw new Error(`Invalid backup: workout note at index ${index} is malformed.`);
+        }
+
+        return {
+            id: item.id,
+            date: item.date,
+            note: item.note ?? null,
+        };
+    });
+
+    const exerciseIds = new Set(exercises.map((exercise) => exercise.id));
+    const workoutIds = new Set(workouts.map((workout) => workout.id));
+
+    const sets: BackupSet[] = data.sets.map((item, index) => {
+        if (!isRecord(item) || !isPositiveInteger(item.id) || !isPositiveInteger(item.workout_id) || !isPositiveInteger(item.exercise_id)) {
+            throw new Error(`Invalid backup: set at index ${index} is malformed.`);
+        }
+
+        if (!isNonNegativeNumber(item.weight_kg) || !isNonNegativeInteger(item.reps)) {
+            throw new Error(`Invalid backup: set numbers at index ${index} are malformed.`);
+        }
+
+        if (!workoutIds.has(item.workout_id)) {
+            throw new Error(`Invalid backup: set ${item.id} references missing workout ${item.workout_id}.`);
+        }
+
+        if (!exerciseIds.has(item.exercise_id)) {
+            throw new Error(`Invalid backup: set ${item.id} references missing exercise ${item.exercise_id}.`);
+        }
+
+        return {
+            id: item.id,
+            workout_id: item.workout_id,
+            exercise_id: item.exercise_id,
+            weight_kg: item.weight_kg,
+            reps: item.reps,
+        };
+    });
+
+    assertUniqueIds(exercises, 'exercise');
+    assertUniqueIds(workouts, 'workout');
+    assertUniqueIds(sets, 'set');
+
+    return { exercises, workouts, sets };
+};
+
 export const initDB = () => {
     try {
         db.execSync(`
@@ -89,6 +226,12 @@ export const initDB = () => {
             );
         `);
 
+        db.execSync(`
+            UPDATE exercises
+            SET target_body_part = 'Arms'
+            WHERE target_body_part IN ('Biceps', 'Triceps');
+        `);
+
         // Standard Gym Exercises List
         const standardExercises = [
             // Chest
@@ -116,11 +259,11 @@ export const initDB = () => {
             ['Front Raise', 'Shoulders'],
             ['Face Pull', 'Shoulders'],
             // Arms
-            ['Barbell Curl', 'Biceps'],
-            ['Dumbbell Curl', 'Biceps'],
-            ['Tricep Extension', 'Triceps'],
-            ['Skullcrusher', 'Triceps'],
-            ['Dips', 'Triceps'],
+            ['Barbell Curl', 'Arms'],
+            ['Dumbbell Curl', 'Arms'],
+            ['Tricep Extension', 'Arms'],
+            ['Skullcrusher', 'Arms'],
+            ['Dips', 'Arms'],
             // Core
             ['Crunch', 'Core'],
             ['Plank', 'Core'],
@@ -269,11 +412,19 @@ export const getSetsForWorkout = (workoutId: number, callback: (sets: WorkoutSet
 export const getExerciseProgress = (exerciseId: number, callback: (data: ExerciseProgress[]) => void) => {
     try {
         const data = db.getAllSync<{ date: string; max_weight: number; reps: number }>(`
-      SELECT w.date, MAX(s.weight_kg) as max_weight, s.reps 
-      FROM sets s 
-      JOIN workouts w ON s.workout_id = w.id 
-      WHERE s.exercise_id = ? 
-      GROUP BY w.date 
+      SELECT w.date, s.weight_kg as max_weight, s.reps
+      FROM sets s
+      JOIN workouts w ON s.workout_id = w.id
+      WHERE s.exercise_id = ?
+        AND s.id = (
+          SELECT s2.id
+          FROM sets s2
+          JOIN workouts w2 ON s2.workout_id = w2.id
+          WHERE s2.exercise_id = s.exercise_id
+            AND w2.date = w.date
+          ORDER BY s2.weight_kg DESC, s2.reps DESC, s2.id DESC
+          LIMIT 1
+        )
       ORDER BY w.date ASC
     `, [exerciseId]);
         // Calculate Estimated 1RM: Weight * (1 + Reps/30)
@@ -321,7 +472,7 @@ export const exportDatabase = async () => {
         const sets = db.getAllSync('SELECT * FROM sets');
 
         const dump = { exercises, workouts, sets, version: 1, exportedAt: new Date().toISOString() };
-        const fileUri = FileSystem.documentDirectory + 'iron_vault_backup.json';
+        const fileUri = FileSystem.documentDirectory + 'localfit_memo_backup.json';
         await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(dump));
         await Sharing.shareAsync(fileUri);
     } catch (error) {
@@ -339,21 +490,18 @@ export const importDatabase = async (callback: () => void) => {
         const content = await FileSystem.readAsStringAsync(fileUri);
         const data = JSON.parse(content);
 
-        if (!data.exercises || !data.workouts || !data.sets) {
-            alert('Invalid backup file');
-            return;
-        }
+        const backup = validateBackupData(data);
 
         db.withTransactionSync(() => {
             db.execSync('DELETE FROM sets; DELETE FROM workouts; DELETE FROM exercises;');
 
-            data.exercises.forEach((e: any) => {
+            backup.exercises.forEach((e) => {
                 db.runSync('INSERT INTO exercises (id, name, target_body_part) VALUES (?, ?, ?)', [e.id, e.name, e.target_body_part]);
             });
-            data.workouts.forEach((w: any) => {
+            backup.workouts.forEach((w) => {
                 db.runSync('INSERT INTO workouts (id, date, note) VALUES (?, ?, ?)', [w.id, w.date, w.note]);
             });
-            data.sets.forEach((s: any) => {
+            backup.sets.forEach((s) => {
                 db.runSync('INSERT INTO sets (id, workout_id, exercise_id, weight_kg, reps) VALUES (?, ?, ?, ?, ?)', [s.id, s.workout_id, s.exercise_id, s.weight_kg, s.reps]);
             });
         });
@@ -361,6 +509,7 @@ export const importDatabase = async (callback: () => void) => {
         callback();
     } catch (err) {
         console.error(err);
+        throw err;
     }
 };
 
@@ -381,18 +530,19 @@ export const getLastSetForExercise = (exerciseId: number, callback: (set: Workou
     }
 };
 
-export const getPersonalBests = (callback: (data: { exerciseName: string; maxWeight: number; bestReps: number }[]) => void) => {
+export const getPersonalBests = (callback: (data: PersonalBest[]) => void) => {
     try {
-        const data = db.getAllSync<{ exerciseName: string; maxWeight: number; bestReps: number }>(`
-            SELECT e.name as exerciseName, s.weight_kg as maxWeight, MAX(s.reps) as bestReps
-            FROM sets s
-            JOIN exercises e ON s.exercise_id = e.id
-            JOIN (
-                SELECT exercise_id, MAX(weight_kg) as max_w
-                FROM sets
-                GROUP BY exercise_id
-            ) max_sets ON s.exercise_id = max_sets.exercise_id AND s.weight_kg = max_sets.max_w
-            GROUP BY e.id, e.name
+        const data = db.getAllSync<PersonalBest>(`
+            SELECT e.id as exerciseId, e.name as exerciseName, s.weight_kg as maxWeight, s.reps as bestReps
+            FROM exercises e
+            JOIN sets s ON s.exercise_id = e.id
+            WHERE s.id = (
+                SELECT s2.id
+                FROM sets s2
+                WHERE s2.exercise_id = e.id
+                ORDER BY s2.weight_kg DESC, s2.reps DESC, s2.id DESC
+                LIMIT 1
+            )
             ORDER BY e.name ASC
         `);
         callback(data);
@@ -450,27 +600,23 @@ export const getRoutines = (callback: (routines: Routine[]) => void) => {
     }
 };
 
-export const applyRoutineToWorkout = (workoutId: number, routineId: number, callback: () => void) => {
+export const getRoutineExercises = (routineId: number, callback: (exercises: RoutineExercise[]) => void) => {
     try {
-        db.withTransactionSync(() => {
-            const exercises = db.getAllSync<{ exercise_id: number }>(`
-                SELECT exercise_id 
-                FROM routine_exercises 
-                WHERE routine_id = ? 
-                ORDER BY sort_order ASC
-            `, [routineId]);
+        const exercises = db.getAllSync<RoutineExercise>(`
+            SELECT re.exercise_id, e.name as exercise_name, e.target_body_part
+            FROM routine_exercises re
+            JOIN exercises e ON re.exercise_id = e.id
+            WHERE re.routine_id = ?
+            ORDER BY re.sort_order ASC
+        `, [routineId]);
 
-            // Add one empty set for each exercise as a placeholder
-            exercises.forEach(ex => {
-                // weight=0, reps=0 acts as a "to do" item
-                db.runSync(
-                    'INSERT INTO sets (workout_id, exercise_id, weight_kg, reps) VALUES (?, ?, 0, 0)',
-                    [workoutId, ex.exercise_id]
-                );
-            });
-        });
-        callback();
+        callback(exercises);
     } catch (error) {
-        console.error('applyRoutineToWorkout error:', error);
+        console.error('getRoutineExercises error:', error);
+        callback([]);
     }
+};
+
+export const applyRoutineToWorkout = (_workoutId: number, routineId: number, callback: (exercises: RoutineExercise[]) => void) => {
+    getRoutineExercises(routineId, callback);
 };
