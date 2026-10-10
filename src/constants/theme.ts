@@ -2,10 +2,10 @@ export const COLORS = {
     background: '#F2F2F7', // Light gray iOS-style background
     surface: '#FFFFFF',    // White cards
     text: '#000000',
-    textSecondary: '#8E8E93',
-    accent: '#007AFF',     // iOS Blue
-    danger: '#FF3B30',
-    success: '#34C759',
+    textSecondary: '#535963',
+    accent: '#005FCC',
+    danger: '#B42318',
+    success: '#176B3A',
     border: '#E5E5EA',
     shadow: '#000000',
 };
@@ -19,8 +19,8 @@ export const SPACING = {
 };
 
 export const FONT_SIZE = {
-    xs: 12,
-    s: 14,
+    xs: 14,
+    s: 15,
     m: 16,
     l: 20,
     xl: 24,

@@ -1,503 +1,341 @@
-import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Modal, TextInput, Alert } from 'react-native';
-import { Link, useFocusEffect, router, Stack } from 'expo-router';
-import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
-import { getWorkouts, Workout, createWorkout, cleanupEmptyWorkouts, getLatestWorkout } from '../src/database/db';
+import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Calendar, DateData } from 'react-native-calendars';
-import { dateKeyToLocalNoon, datePartsToLocalNoon, toLocalDateKey } from '../src/utils/date';
+import { Calendar, LocaleConfig } from 'react-native-calendars';
+import type { CalendarHeaderProps } from 'react-native-calendars/src/calendar/header';
+import type { DateData, MarkedDates } from 'react-native-calendars/src/types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { COLORS, SPACING, FONT_SIZE, SHADOWS } from '../src/constants/theme';
+import { cleanupEmptyWorkouts, createWorkout, getWorkouts, Workout } from '../src/database/db';
+import { useLanguage } from '../src/i18n';
+import { dateKeyToLocalNoon, toLocalDateKey } from '../src/utils/date';
+
+LocaleConfig.locales.en = LocaleConfig.locales[''];
+LocaleConfig.locales.ja = {
+    monthNames: Array.from({ length: 12 }, (_, index) => `${index + 1}月`),
+    monthNamesShort: Array.from({ length: 12 }, (_, index) => `${index + 1}月`),
+    dayNames: ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'],
+    dayNamesShort: ['日', '月', '火', '水', '木', '金', '土'],
+    today: '今日',
+};
 
 export default function HomeScreen() {
+    const { language, t, bodyPartLabel } = useLanguage();
+    useLayoutEffect(() => {
+        // Calendar announces its visible month in a passive effect.
+        LocaleConfig.defaultLocale = language;
+    }, [language]);
+    const insets = useSafeAreaInsets();
     const [workouts, setWorkouts] = useState<Workout[]>([]);
     const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+    const [loading, setLoading] = useState(true);
+    const [loadFailed, setLoadFailed] = useState(false);
+    const [createFailed, setCreateFailed] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const creatingRef = useRef(false);
+    const today = toLocalDateKey(new Date());
+    const [selectedDate, setSelectedDate] = useState(today);
+    const locale = language === 'ja' ? 'ja-JP' : 'en-US';
+    const hasToday = workouts.some(workout => toLocalDateKey(workout.date) === today);
+    const selectedWorkout = workouts.find(workout => toLocalDateKey(workout.date) === selectedDate);
+    const formatDate = useCallback((value: string) => dateKeyToLocalNoon(value).toLocaleDateString(locale, {
+        year: 'numeric', month: 'long', day: 'numeric', weekday: 'short',
+    }), [locale]);
 
-    // Past Workout Modal
-    const [isDateModalVisible, setDateModalVisible] = useState(false);
-    const [year, setYear] = useState('');
-    const [month, setMonth] = useState('');
-    const [day, setDay] = useState('');
+    const loadWorkouts = useCallback(() => {
+        setLoading(true);
+        setLoadFailed(false);
+        const onError = () => {
+            setLoadFailed(true);
+            setLoading(false);
+        };
+        cleanupEmptyWorkouts(() => {
+            getWorkouts(result => {
+                setWorkouts(result);
+                setLoading(false);
+            }, onError);
+        }, onError);
+    }, []);
 
-    useFocusEffect(
-        useCallback(() => {
-            cleanupEmptyWorkouts(() => {
-                getWorkouts(setWorkouts);
-            });
-        }, [])
-    );
+    useFocusEffect(useCallback(() => {
+        creatingRef.current = false;
+        setCreating(false);
+        loadWorkouts();
+    }, [loadWorkouts]));
 
-    const handleNewWorkout = () => {
-        getLatestWorkout((latestWorkout) => {
-            const today = toLocalDateKey(new Date());
-            if (latestWorkout && toLocalDateKey(latestWorkout.date) === today) {
-                // Resume today's workout
-                router.push({ pathname: '/workout', params: { id: latestWorkout.id } });
-            } else {
-                // Start fresh for TODAY
-                createWorkout('', null, (id) => {
-                    router.push({ pathname: '/workout', params: { id } });
-                });
-            }
+    const openWorkout = (date: string) => {
+        if (creatingRef.current || date > toLocalDateKey(new Date())) return;
+        creatingRef.current = true;
+        setCreating(true);
+        setCreateFailed(false);
+        // The database resumes an existing record for this local day.
+        createWorkout('', date === today ? null : dateKeyToLocalNoon(date).toISOString(), id => {
+            router.push({ pathname: '/workout', params: { id, date } });
+        }, () => {
+            creatingRef.current = false;
+            setCreating(false);
+            setCreateFailed(true);
         });
     };
 
-    const handleCreatePastWorkout = () => {
-        const y = parseInt(year, 10);
-        const m = parseInt(month, 10);
-        const d = parseInt(day, 10);
+    const markedDates: MarkedDates = {};
+    workouts.forEach(workout => {
+        markedDates[toLocalDateKey(workout.date)] = { marked: true, dotColor: COLORS.accent };
+    });
+    markedDates[selectedDate] = { ...markedDates[selectedDate], selected: true };
 
-        const date = datePartsToLocalNoon(y, m, d);
+    const renderCalendarHeader = useCallback(({ month, addMonth }: CalendarHeaderProps) => {
+        const monthDate = month ? new Date(month.getFullYear(), month.getMonth(), 1) : new Date();
+        const atCurrentMonth = toLocalDateKey(monthDate).slice(0, 7) >= today.slice(0, 7);
+        return (
+            <View>
+                <View style={styles.calendarHeader}>
+                    <TouchableOpacity
+                        style={styles.monthButton}
+                        onPress={() => addMonth?.(-1)}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('前の月', 'Previous month')}
+                    >
+                        <Ionicons name="chevron-back" size={24} color={COLORS.accent} />
+                    </TouchableOpacity>
+                    <Text accessibilityRole="header" style={styles.monthTitle}>
+                        {monthDate.toLocaleDateString(locale, { year: 'numeric', month: 'long' })}
+                    </Text>
+                    <TouchableOpacity
+                        style={styles.monthButton}
+                        onPress={() => addMonth?.(1)}
+                        disabled={atCurrentMonth}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('次の月', 'Next month')}
+                        accessibilityState={{ disabled: atCurrentMonth }}
+                    >
+                        <Ionicons name="chevron-forward" size={24} color={atCurrentMonth ? COLORS.textSecondary : COLORS.accent} />
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.weekdays} accessible={false} importantForAccessibility="no-hide-descendants">
+                    {t('日,月,火,水,木,金,土', 'Sun,Mon,Tue,Wed,Thu,Fri,Sat').split(',').map(day => (
+                        <Text key={day} style={styles.weekday}>{day}</Text>
+                    ))}
+                </View>
+            </View>
+        );
+    }, [locale, t, today]);
 
-        // Basic validation
-        if (isNaN(date.getTime()) || date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) {
-            alert('Invalid Date');
-            return;
-        }
-
-        createWorkout('', date.toISOString(), (id) => {
-            setDateModalVisible(false);
-            setYear('');
-            setMonth('');
-            setDay('');
-            router.push({ pathname: '/workout', params: { id } });
-        });
-    };
-
-    const openDateModal = () => {
-        const now = new Date();
-        const yesterday = datePartsToLocalNoon(now.getFullYear(), now.getMonth() + 1, now.getDate() - 1);
-        setYear(yesterday.getFullYear().toString());
-        setMonth((yesterday.getMonth() + 1).toString());
-        setDay(yesterday.getDate().toString());
-        setDateModalVisible(true);
-    };
-
-    // Calendar Handlers
-    const getMarkedDates = () => {
-        const marked: any = {};
-        workouts.forEach(w => {
-            const dateStr = toLocalDateKey(w.date);
-            marked[dateStr] = { marked: true, dotColor: COLORS.accent };
-        });
-        return marked;
-    };
-
-    const handleDayPress = (day: DateData) => {
-        // Find if workout exists for this date
-        // Note: Compare local dates carefully
-        const selectedDateStr = day.dateString;
-        const existingWorkout = workouts.find(w => {
-            const wDate = toLocalDateKey(w.date);
-            return wDate === selectedDateStr;
-        });
-
-        if (existingWorkout) {
-            router.push({ pathname: '/workout', params: { id: existingWorkout.id } });
-        } else {
-            Alert.alert(
-                "Log Workout",
-                `Create a workout for ${day.month}/${day.day}?`,
-                [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                        text: "Create",
-                        onPress: () => {
-                            const dateToCreate = dateKeyToLocalNoon(day.dateString);
-                            createWorkout('', dateToCreate.toISOString(), (id) => {
-                                router.push({ pathname: '/workout', params: { id } });
-                            });
-                        }
-                    }
-                ]
-            );
-        }
-    };
+    const renderCalendarDay = useCallback(({ date, marking }: { date?: DateData; marking?: { marked?: boolean; selected?: boolean } }) => {
+        if (!date) return <View />;
+        const disabled = date.dateString > today;
+        const selected = !!marking?.selected;
+        return (
+            <TouchableOpacity
+                style={[styles.calendarDay, selected && styles.selectedDay]}
+                disabled={disabled}
+                onPress={() => setSelectedDate(date.dateString)}
+                accessibilityRole="button"
+                accessibilityState={{ selected, disabled }}
+                accessibilityLabel={`${formatDate(date.dateString)}${marking?.marked ? t('、記録あり', ', workout recorded') : ''}`}
+            >
+                <Text style={[styles.dayText, disabled && styles.disabledDayText, selected && styles.selectedDayText]}>{date.day}</Text>
+                {marking?.marked && <View style={[styles.dayDot, selected && styles.selectedDot]} />}
+            </TouchableOpacity>
+        );
+    }, [formatDate, t, today]);
 
     const renderItem = ({ item }: { item: Workout }) => {
-        const dateObj = new Date(item.date);
-        const dateStr = dateObj.toLocaleDateString(undefined, {
-            weekday: 'short',
-            month: 'short',
-            day: 'numeric',
-        });
-        const timeStr = dateObj.toLocaleTimeString(undefined, {
-            hour: '2-digit',
-            minute: '2-digit',
-        });
-
+        const label = formatDate(toLocalDateKey(item.date));
+        const parts = item.bodyParts?.split(',').map(part => bodyPartLabel(part.trim())).join(' · ');
         return (
             <TouchableOpacity
                 style={styles.card}
-                onPress={() => router.push({ pathname: '/workout', params: { id: item.id } })}
+                onPress={() => router.push({ pathname: '/workout', params: { id: item.id, date: toLocalDateKey(item.date) } })}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={[label, parts, item.note].filter(Boolean).join(', ')}
+                accessibilityHint={t('この日の記録を開きます', 'Opens the workout for this date')}
             >
                 <View style={styles.cardHeader}>
-                    <View>
-                        <Text style={styles.dateText}>{dateStr}</Text>
-                        <Text style={styles.timeText}>{timeStr}</Text>
-                    </View>
-                    <View style={styles.volumeBadge}>
-                        <Text style={styles.volumeLabel}>TARGET</Text>
-                        <Text style={styles.volumeText}>
-                            {item.bodyParts ? item.bodyParts.split(',').join(' • ') : '-'}
-                        </Text>
-                    </View>
+                    <Text style={styles.dateText}>{label}</Text>
+                    <Ionicons name="chevron-forward" size={22} color={COLORS.textSecondary} />
                 </View>
-
-                {/* Exercise names removed as per request */}
-
-                {item.note ? (
-                    <View style={styles.noteContainer}>
-                        <Ionicons name="document-text-outline" size={14} color={COLORS.textSecondary} style={{ marginRight: 4 }} />
-                        <Text style={styles.noteText} numberOfLines={1}>{item.note}</Text>
-                    </View>
-                ) : null}
-
-                <View style={styles.chevron}>
-                    <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
-                </View>
+                <Text style={styles.bodyParts}>{parts || t('記録あり', 'Workout recorded')}</Text>
+                {item.note ? <Text style={styles.noteText}>{item.note}</Text> : null}
             </TouchableOpacity>
         );
     };
 
     return (
         <View style={styles.container}>
-            <Stack.Screen
-                options={{
-                    headerRight: () => (
-                        <View style={{ flexDirection: 'row', gap: 16 }}>
-                            <TouchableOpacity onPress={() => setViewMode(viewMode === 'list' ? 'calendar' : 'list')}>
-                                <Ionicons
-                                    name={viewMode === 'list' ? "calendar-outline" : "list-outline"}
-                                    size={24}
-                                    color={COLORS.accent}
+            <Stack.Screen options={{ title: 'LocalFit Memo', headerRight: () => null }} />
+            <FlatList
+                data={viewMode === 'list' && !loadFailed ? workouts : []}
+                renderItem={renderItem}
+                keyExtractor={item => item.id.toString()}
+                contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, SPACING.m) + SPACING.l }]}
+                refreshing={loading}
+                onRefresh={loadWorkouts}
+                ListHeaderComponent={
+                    <View>
+                        <View style={styles.intro}>
+                            <Text accessibilityRole="header" style={styles.title}>{t('今日のトレーニング', 'Your training today')}</Text>
+                            <Text style={styles.subtitle}>{t('自分のペースで、1セットずつ。', 'At your pace, one set at a time.')}</Text>
+                            <TouchableOpacity
+                                style={[styles.primaryButton, creating && styles.busyButton]}
+                                onPress={() => openWorkout(today)}
+                                disabled={creating}
+                                accessibilityRole="button"
+                                accessibilityState={{ disabled: creating, busy: creating }}
+                            >
+                                {creating ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="add-circle-outline" size={24} color="#FFFFFF" />}
+                                <Text style={styles.primaryButtonText}>
+                                    {creating ? t('記録を開いています…', 'Opening workout…') : hasToday ? t('今日の記録を続ける', 'Continue today’s workout') : t('今日の記録を始める', 'Log today’s workout')}
+                                </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.secondaryButton}
+                                onPress={() => { setViewMode('calendar'); setSelectedDate(today); }}
+                                accessibilityRole="button"
+                                accessibilityHint={t('カレンダーで日付を選べます', 'Shows a calendar to select a date')}
+                            >
+                                <Ionicons name="calendar-outline" size={22} color={COLORS.accent} />
+                                <Text style={styles.secondaryButtonText}>{t('日付を選んで記録する', 'Log a different date')}</Text>
+                            </TouchableOpacity>
+                            {createFailed && (
+                                <Text style={styles.errorText} accessibilityRole="alert" accessibilityLiveRegion="polite">
+                                    {t('記録を開けませんでした。もう一度ボタンを押してください。', 'Could not open the workout. Please try the button again.')}
+                                </Text>
+                            )}
+                        </View>
+
+                        <View style={styles.navigationRow}>
+                            <TouchableOpacity style={styles.navigationButton} onPress={() => router.push('/stats')} accessibilityRole="button">
+                                <Ionicons name="trending-up-outline" size={24} color={COLORS.accent} />
+                                <Text style={styles.navigationLabel}>{t('成長を見る', 'Progress')}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.navigationButton} onPress={() => router.push('/settings')} accessibilityRole="button">
+                                <Ionicons name="settings-outline" size={24} color={COLORS.accent} />
+                                <Text style={styles.navigationLabel}>{t('設定・バックアップ', 'Settings & backup')}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text accessibilityRole="header" style={styles.sectionTitle}>{t('トレーニングの記録', 'Workout history')}</Text>
+                        <View style={styles.modeRow}>
+                            {(['list', 'calendar'] as const).map(mode => (
+                                <TouchableOpacity
+                                    key={mode}
+                                    style={[styles.modeButton, viewMode === mode && styles.modeButtonSelected]}
+                                    onPress={() => setViewMode(mode)}
+                                    accessibilityRole="tab"
+                                    accessibilityState={{ selected: viewMode === mode }}
+                                >
+                                    <Ionicons name={mode === 'list' ? 'list-outline' : 'calendar-outline'} size={20} color={viewMode === mode ? '#FFFFFF' : COLORS.textSecondary} />
+                                    <Text style={[styles.modeText, viewMode === mode && styles.modeTextSelected]}>
+                                        {mode === 'list' ? t('一覧', 'List') : t('カレンダー', 'Calendar')}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        {loadFailed && (
+                            <View style={styles.messageCard}>
+                                <Text style={styles.errorText} accessibilityRole="alert">{t('履歴を読み込めませんでした。', 'Could not load workout history.')}</Text>
+                                <TouchableOpacity style={styles.secondaryButton} onPress={loadWorkouts} accessibilityRole="button">
+                                    <Text style={styles.secondaryButtonText}>{t('もう一度読み込む', 'Try again')}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {viewMode === 'calendar' && (
+                            <View style={styles.calendarCard}>
+                                <Text style={styles.calendarHelp}>{t('日付を選び、下のボタンで記録を開きます。', 'Select a date, then open its workout below.')}</Text>
+                                <Calendar
+                                    key={language}
+                                    current={selectedDate}
+                                    initialDate={`${selectedDate.slice(0, 7)}-01`}
+                                    maxDate={today}
+                                    hideExtraDays
+                                    disableAllTouchEventsForDisabledDays
+                                    markedDates={loadFailed ? { [selectedDate]: { selected: true } } : markedDates}
+                                    customHeader={renderCalendarHeader}
+                                    dayComponent={renderCalendarDay}
+                                    theme={{ calendarBackground: COLORS.surface, backgroundColor: COLORS.surface, textDayFontSize: FONT_SIZE.m }}
                                 />
-                            </TouchableOpacity>
-                            <Link href="/stats" asChild>
-                                <TouchableOpacity>
-                                    <Ionicons name="trophy-outline" size={24} color={COLORS.accent} />
-                                </TouchableOpacity>
-                            </Link>
-                            <Link href="/settings" asChild>
-                                <TouchableOpacity>
-                                    <Ionicons name="settings-outline" size={24} color={COLORS.accent} />
-                                </TouchableOpacity>
-                            </Link>
-                        </View>
-                    ),
-                }}
+                                <Text style={styles.calendarHelp}>{t('● は記録がある日です。', '● marks a day with a workout.')}</Text>
+                                <View style={styles.selectedDateCard}>
+                                    <Text style={styles.selectedDateLabel} accessibilityLiveRegion="polite">{formatDate(selectedDate)}</Text>
+                                    <TouchableOpacity
+                                        style={[styles.primaryButton, creating && styles.busyButton]}
+                                        disabled={creating}
+                                        onPress={() => openWorkout(selectedDate)}
+                                        accessibilityRole="button"
+                                        accessibilityState={{ disabled: creating, busy: creating }}
+                                    >
+                                        <Text style={styles.primaryButtonText}>{selectedWorkout ? t('この日の記録を開く', 'Open this workout') : t('この日に記録する', 'Log this date')}</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+                    </View>
+                }
+                ListEmptyComponent={viewMode === 'list' && !loading && !loadFailed ? (
+                    <View style={styles.messageCard}>
+                        <Ionicons name="barbell-outline" size={40} color={COLORS.accent} />
+                        <Text style={styles.emptyTitle}>{t('最初の1セットから始めましょう', 'Start with your first set')}</Text>
+                        <Text style={styles.emptyStep}>{t('1.「今日の記録を始める」を押す', '1. Tap “Log today’s workout”')}</Text>
+                        <Text style={styles.emptyStep}>{t('2. 種目を選び、重量と回数を入力する', '2. Choose an exercise, then enter weight and reps')}</Text>
+                        <Text style={styles.emptyStep}>{t('3.「セットを保存」を押す', '3. Tap “Save set”')}</Text>
+                        <Text style={styles.emptyHint}>{t('記録したトレーニングはここに表示されます。', 'Your workouts will appear here.')}</Text>
+                    </View>
+                ) : loading ? <ActivityIndicator style={styles.loadingIndicator} color={COLORS.accent} accessibilityLabel={t('履歴を読み込み中', 'Loading workout history')} /> : null}
             />
-
-            {viewMode === 'list' ? (
-                <FlatList
-                    data={workouts}
-                    renderItem={renderItem}
-                    keyExtractor={(item) => item.id.toString()}
-                    contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="barbell-outline" size={64} color={COLORS.border} />
-                            <Text style={styles.emptyText}>No workouts yet.</Text>
-                            <Text style={styles.emptySubText}>Tap the + button to start training!</Text>
-                        </View>
-                    }
-                />
-            ) : (
-                <View style={styles.calendarContainer}>
-                    <Calendar
-                        markingType={'simple'}
-                        markedDates={getMarkedDates()}
-                        onDayPress={handleDayPress}
-                        theme={{
-                            backgroundColor: COLORS.background,
-                            calendarBackground: COLORS.background,
-                            textSectionTitleColor: COLORS.textSecondary,
-                            selectedDayBackgroundColor: COLORS.accent,
-                            selectedDayTextColor: '#ffffff',
-                            todayTextColor: COLORS.accent,
-                            dayTextColor: COLORS.text,
-                            textDisabledColor: COLORS.border,
-                            dotColor: COLORS.accent,
-                            selectedDotColor: '#ffffff',
-                            arrowColor: COLORS.accent,
-                            monthTextColor: COLORS.text,
-                            textDayFontWeight: '300',
-                            textMonthFontWeight: 'bold',
-                            textDayHeaderFontWeight: '300',
-                            textDayFontSize: 16,
-                            textMonthFontSize: 16,
-                            textDayHeaderFontSize: 16
-                        }}
-                    />
-                    <View style={styles.calendarHint}>
-                        <Text style={styles.calendarHintText}>
-                            Drafts marked with <Ionicons name="ellipse" size={10} color={COLORS.accent} />
-                        </Text>
-                        <Text style={styles.calendarHintText}>
-                            Tap a date to edit or create a workout.
-                        </Text>
-                    </View>
-                </View>
-            )}
-
-            {/* Floating Action Button (Only in List Mode or to quickly add today) */}
-            {viewMode === 'list' && (
-                <TouchableOpacity
-                    style={styles.fab}
-                    onPress={handleNewWorkout}
-                    onLongPress={openDateModal}
-                    activeOpacity={0.8}
-                >
-                    <Ionicons name="add" size={32} color="#FFFFFF" />
-                </TouchableOpacity>
-            )}
-
-            {/* Past Date Modal */}
-            <Modal visible={isDateModalVisible} transparent animationType="fade">
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalCard}>
-                        <Text style={styles.modalTitle}>Log Past Workout</Text>
-                        <Text style={styles.modalSubtitle}>Enter date (YYYY / MM / DD)</Text>
-
-                        <View style={styles.dateInputRow}>
-                            <TextInput
-                                style={[styles.dateInput, { flex: 2 }]}
-                                placeholder="YYYY"
-                                value={year}
-                                onChangeText={setYear}
-                                keyboardType="number-pad"
-                                maxLength={4}
-                            />
-                            <Text style={styles.slash}>/</Text>
-                            <TextInput
-                                style={[styles.dateInput, { flex: 1 }]}
-                                placeholder="MM"
-                                value={month}
-                                onChangeText={setMonth}
-                                keyboardType="number-pad"
-                                maxLength={2}
-                            />
-                            <Text style={styles.slash}>/</Text>
-                            <TextInput
-                                style={[styles.dateInput, { flex: 1 }]}
-                                placeholder="DD"
-                                value={day}
-                                onChangeText={setDay}
-                                keyboardType="number-pad"
-                                maxLength={2}
-                            />
-                        </View>
-
-                        <View style={styles.modalButtons}>
-                            <TouchableOpacity onPress={() => setDateModalVisible(false)} style={styles.modalBtnCancel}>
-                                <Text style={styles.modalBtnTextCancel}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={handleCreatePastWorkout} style={styles.modalBtnSave}>
-                                <Text style={styles.modalBtnTextSave}>Create</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View >
-            </Modal >
-        </View >
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: COLORS.background,
-    },
-    listContent: {
-        padding: SPACING.m,
-        paddingBottom: 100, // Space for FAB
-    },
-    calendarContainer: {
-        paddingTop: SPACING.m,
-    },
-    calendarHint: {
-        padding: SPACING.m,
-        alignItems: 'center',
-    },
-    calendarHintText: {
-        color: COLORS.textSecondary,
-        fontSize: FONT_SIZE.s,
-        marginTop: 4,
-    },
-    card: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 16,
-        padding: SPACING.m,
-        marginBottom: SPACING.m,
-        ...SHADOWS.small,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        position: 'relative',
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start', // Align to top to handle multi-line right side
-        marginBottom: SPACING.s,
-    },
-    dateText: {
-        fontSize: FONT_SIZE.l,
-        fontWeight: '700',
-        color: COLORS.text,
-        flexShrink: 0, // Prevent date from shrinking
-    },
-    timeText: {
-        fontSize: FONT_SIZE.xs,
-        color: COLORS.textSecondary,
-        marginTop: 2,
-    },
-    volumeBadge: {
-        alignItems: 'flex-end',
-        flex: 1, // Allow to take remaining space
-        marginLeft: SPACING.m, // Force gap between date and target
-    },
-    volumeLabel: {
-        fontSize: 10,
-        fontWeight: '700',
-        color: COLORS.textSecondary,
-        letterSpacing: 0.5,
-    },
-    volumeText: {
-        fontSize: FONT_SIZE.m,
-        fontWeight: '700',
-        color: COLORS.accent,
-        textAlign: 'right', // Ensure right alignment
-    },
-    noteContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: SPACING.s,
-        backgroundColor: COLORS.background,
-        padding: SPACING.s,
-        borderRadius: 8,
-    },
-    noteText: {
-        color: COLORS.textSecondary,
-        fontSize: FONT_SIZE.s,
-        flex: 1,
-    },
-    exercisesContainer: {
-        marginTop: SPACING.s,
-    },
-    exercisesText: {
-        fontSize: FONT_SIZE.s,
-        color: COLORS.text,
-        fontWeight: '500',
-        lineHeight: 20,
-    },
-    chevron: {
-        position: 'absolute',
-        right: SPACING.s,
-        top: '50%',
-        marginTop: -10, // Half of icon size
-        opacity: 0.3,
-    },
-    emptyContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 100,
-    },
-    emptyText: {
-        fontSize: FONT_SIZE.l,
-        fontWeight: '700',
-        color: COLORS.textSecondary,
-        marginTop: SPACING.m,
-    },
-    emptySubText: {
-        fontSize: FONT_SIZE.s,
-        color: COLORS.textSecondary,
-        marginTop: SPACING.s,
-    },
-    fab: {
-        position: 'absolute',
-        bottom: SPACING.xl,
-        right: SPACING.xl,
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        backgroundColor: COLORS.accent,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...SHADOWS.medium,
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: SPACING.l,
-    },
-    modalCard: {
-        backgroundColor: COLORS.surface,
-        borderRadius: 16,
-        padding: SPACING.l,
-        width: '100%',
-        maxWidth: 340,
-        ...SHADOWS.medium,
-    },
-    modalTitle: {
-        fontSize: FONT_SIZE.l,
-        fontWeight: 'bold',
-        color: COLORS.text,
-        textAlign: 'center',
-        marginBottom: 4,
-    },
-    modalSubtitle: {
-        fontSize: FONT_SIZE.s,
-        color: COLORS.textSecondary,
-        textAlign: 'center',
-        marginBottom: SPACING.l,
-    },
-    dateInputRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginBottom: SPACING.l,
-    },
-    dateInput: {
-        backgroundColor: COLORS.background,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        borderRadius: 8,
-        padding: 12,
-        fontSize: FONT_SIZE.m,
-        textAlign: 'center',
-        fontWeight: 'bold',
-        color: COLORS.text,
-    },
-    slash: {
-        fontSize: FONT_SIZE.l,
-        color: COLORS.textSecondary,
-        fontWeight: 'bold',
-    },
-    modalButtons: {
-        flexDirection: 'row',
-        gap: SPACING.m,
-    },
-    modalBtnCancel: {
-        flex: 1,
-        padding: 14,
-        alignItems: 'center',
-        borderRadius: 8,
-        backgroundColor: COLORS.background,
-    },
-    modalBtnSave: {
-        flex: 1,
-        padding: 14,
-        alignItems: 'center',
-        borderRadius: 8,
-        backgroundColor: COLORS.accent,
-    },
-    modalBtnTextCancel: {
-        fontWeight: '600',
-        color: COLORS.textSecondary,
-    },
-    modalBtnTextSave: {
-        fontWeight: 'bold',
-        color: '#FFF',
-    },
+    container: { flex: 1, backgroundColor: COLORS.background },
+    content: { padding: SPACING.m, flexGrow: 1 },
+    intro: { backgroundColor: COLORS.surface, padding: SPACING.m, borderRadius: 20, borderColor: COLORS.border, borderWidth: 1 },
+    title: { color: COLORS.text, fontSize: FONT_SIZE.xl, fontWeight: '700' },
+    subtitle: { color: COLORS.textSecondary, fontSize: FONT_SIZE.m, marginTop: SPACING.s, marginBottom: SPACING.m },
+    primaryButton: { minHeight: 56, paddingVertical: SPACING.m, paddingHorizontal: SPACING.m, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: SPACING.s, borderRadius: 12, backgroundColor: COLORS.accent },
+    busyButton: { opacity: 0.75 },
+    primaryButtonText: { fontSize: FONT_SIZE.m, fontWeight: '700', color: '#FFFFFF', textAlign: 'center', flexShrink: 1 },
+    secondaryButton: { minHeight: 52, paddingVertical: 12, paddingHorizontal: SPACING.s, marginTop: SPACING.s, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: SPACING.s, borderRadius: 12, borderWidth: 1, borderColor: COLORS.accent },
+    secondaryButtonText: { fontSize: FONT_SIZE.m, fontWeight: '600', color: COLORS.accent, flexShrink: 1, textAlign: 'center' },
+    navigationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.s, marginVertical: SPACING.m },
+    navigationButton: { minHeight: 56, flexGrow: 1, flexBasis: 135, backgroundColor: COLORS.surface, borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.s, borderWidth: 1, borderColor: COLORS.border },
+    navigationLabel: { color: COLORS.text, fontSize: FONT_SIZE.m, fontWeight: '600', flexShrink: 1 },
+    sectionTitle: { color: COLORS.text, fontSize: FONT_SIZE.l, fontWeight: '700', marginTop: SPACING.s, marginBottom: SPACING.m },
+    modeRow: { flexDirection: 'row', gap: SPACING.s, marginBottom: SPACING.m },
+    modeButton: { flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: SPACING.s, gap: SPACING.s, borderRadius: 12, borderColor: COLORS.border, borderWidth: 1, backgroundColor: COLORS.surface },
+    modeButtonSelected: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+    modeText: { color: COLORS.textSecondary, fontSize: FONT_SIZE.m, fontWeight: '600', flexShrink: 1 },
+    modeTextSelected: { color: '#FFFFFF' },
+    card: { backgroundColor: COLORS.surface, borderRadius: 16, padding: SPACING.m, marginBottom: SPACING.m, borderWidth: 1, borderColor: COLORS.border, ...SHADOWS.small },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.s },
+    dateText: { color: COLORS.text, fontSize: FONT_SIZE.l, fontWeight: '700', flex: 1 },
+    bodyParts: { color: COLORS.accent, fontSize: FONT_SIZE.m, marginTop: SPACING.s, fontWeight: '600' },
+    noteText: { color: COLORS.textSecondary, fontSize: FONT_SIZE.s, marginTop: SPACING.s },
+    messageCard: { backgroundColor: COLORS.surface, borderRadius: 16, padding: SPACING.l, marginBottom: SPACING.m, borderColor: COLORS.border, borderWidth: 1 },
+    emptyTitle: { color: COLORS.text, fontSize: FONT_SIZE.l, fontWeight: '700', marginTop: SPACING.m, marginBottom: SPACING.s },
+    emptyStep: { color: COLORS.text, fontSize: FONT_SIZE.m, marginTop: SPACING.s },
+    emptyHint: { color: COLORS.textSecondary, fontSize: FONT_SIZE.s, marginTop: SPACING.m },
+    errorText: { color: COLORS.danger, fontSize: FONT_SIZE.m, marginTop: SPACING.s },
+    loadingIndicator: { margin: SPACING.l },
+    calendarCard: { backgroundColor: COLORS.surface, borderRadius: 16, overflow: 'hidden', borderColor: COLORS.border, borderWidth: 1 },
+    calendarHelp: { fontSize: FONT_SIZE.s, color: COLORS.textSecondary, padding: SPACING.m },
+    calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    monthButton: { minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' },
+    monthTitle: { color: COLORS.text, fontSize: FONT_SIZE.l, fontWeight: '700', flex: 1, textAlign: 'center' },
+    weekdays: { flexDirection: 'row', marginVertical: SPACING.s },
+    weekday: { flex: 1, textAlign: 'center', color: COLORS.textSecondary, fontSize: FONT_SIZE.s },
+    calendarDay: { minHeight: 48, width: '100%', paddingVertical: SPACING.s, justifyContent: 'center', alignItems: 'center', borderRadius: 8 },
+    selectedDay: { backgroundColor: COLORS.accent },
+    dayText: { fontSize: FONT_SIZE.m, color: COLORS.text },
+    disabledDayText: { color: COLORS.textSecondary, opacity: 0.6 },
+    selectedDayText: { color: '#FFFFFF', fontWeight: '700' },
+    dayDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.accent, marginTop: 3 },
+    selectedDot: { backgroundColor: '#FFFFFF' },
+    selectedDateCard: { padding: SPACING.m, borderTopWidth: 1, borderTopColor: COLORS.border },
+    selectedDateLabel: { fontSize: FONT_SIZE.m, color: COLORS.text, fontWeight: '600', textAlign: 'center', marginBottom: SPACING.m },
 });

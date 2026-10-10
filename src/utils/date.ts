@@ -1,7 +1,12 @@
 const pad2 = (value: number) => value.toString().padStart(2, '0');
 
 export const toLocalDateKey = (value: Date | string | number) => {
-    const date = value instanceof Date ? value : new Date(value);
+    // Backups may store a calendar day without a time zone. Date's string parser
+    // treats that format as UTC, which shifts it to yesterday west of UTC.
+    const date = value instanceof Date ? value
+        : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+            ? dateKeyToLocalNoon(value)
+            : new Date(value);
 
     return [
         date.getFullYear(),
